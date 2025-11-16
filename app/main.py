@@ -241,6 +241,22 @@ async def run_real_mode() -> None:
                 ai_client=ai_client
             )
 
+            from_header = call.invite.headers.get("From", {})
+            caller_address = from_header.get("address")
+            caller_display = from_header.get("display_name")
+            caller: Optional[str]
+            if caller_display and caller_address:
+                caller = f"{caller_display} <sip:{caller_address}>"
+            elif caller_address:
+                caller = f"sip:{caller_address}"
+            else:
+                caller = caller_display
+
+            call_session.set_call_context(
+                call_id=call.call_id,
+                caller=caller
+            )
+
             # Setup call with these components
             await call.setup(audio_adapter, call_session)
 

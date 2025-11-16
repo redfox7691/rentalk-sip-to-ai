@@ -537,6 +537,22 @@ class OpenAIRealtimeClient(AiDuplexBase):
                 conversation_logger = logging.getLogger("conversation")
                 conversation_logger.info("AGENT: %s", transcript)
 
+        elif msg_type == "response.output_audio_transcript.done":
+            # Newer schema for AI audio transcript completions
+            transcript = data.get("transcript")
+            self._logger.info(f"✅ AI output audio transcript done: {transcript}")
+            if transcript:
+                conversation_logger = logging.getLogger("conversation")
+                conversation_logger.info("AGENT: %s", transcript)
+
+        elif msg_type == "response.output_text.done":
+            # Textual response completion events
+            transcript = data.get("text") or data.get("output_text")
+            self._logger.info(f"✅ AI output text done: {transcript}")
+            if transcript:
+                conversation_logger = logging.getLogger("conversation")
+                conversation_logger.info("AGENT: %s", transcript)
+
         elif msg_type == "response.output_audio.delta":
             # Audio chunk from AI (base64 encoded G.711 μ-law @ 8kHz)
             audio_base64 = data.get("delta")
