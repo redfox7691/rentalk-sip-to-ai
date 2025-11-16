@@ -1,6 +1,7 @@
 """Call session lifecycle management: AI connection + audio transport."""
 
 import asyncio
+import logging
 from typing import Optional
 
 import structlog
@@ -33,6 +34,21 @@ class CallSession:
         self._task_group_task: Optional[asyncio.Task[None]] = None
 
         self._logger = structlog.get_logger(__name__)
+        self._conversation_logger = logging.getLogger("conversation")
+
+        self._call_id: Optional[str] = None
+        self._caller: Optional[str] = None
+        self._header_logged = False
+
+    def set_call_context(
+        self,
+        call_id: Optional[str],
+        caller: Optional[str] = None
+    ) -> None:
+        """Store metadata for conversation logging."""
+
+        self._call_id = call_id
+        self._caller = caller
 
     async def start(self) -> None:
         """Start the call session using asyncio.TaskGroup.
@@ -44,6 +60,8 @@ class CallSession:
             return
 
         self._running = True
+
+        self._log_conversation_header()
 
         try:
             # Connect AI client
@@ -108,6 +126,23 @@ class CallSession:
             self._logger.error(f"Failed to start session: {e}", exc_info=True)
             self._running = False
             raise
+
+    def _log_conversation_header(self) -> None:
+        """Write a separator entry for each new call."""
+
+        if self._header_logged:
+            return
+
+        call_id = self._call_id or getattr(self._ai, "call_id", None)
+        caller = self._caller or getattr(self._ai, "caller", None)
+
+        # Always include the placeholders to keep format consistent
+        self._conversation_logger.info(
+            "=== NEW CALL === call_id=%s from=%s ===",
+            call_id or "unknown",
+            caller or "unknown"
+        )
+        self._header_logged = True
 
     async def stop(self) -> None:
         """Stop the call session."""
