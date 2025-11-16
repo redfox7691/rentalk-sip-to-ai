@@ -73,6 +73,33 @@ def setup_logging() -> None:
     logger = structlog.get_logger(__name__)
     logger.info(f"Logging to file: {log_file}")
 
+    # Configure conversation logger if enabled
+    conversation_logger = logging.getLogger("conversation")
+    conversation_logger.setLevel(logging.INFO)
+    conversation_logger.propagate = False
+
+    conversation_log_path = config.system.conversation_log_path
+    if conversation_log_path:
+        try:
+            conversation_file = Path(conversation_log_path)
+            if not conversation_file.parent.exists():
+                conversation_file.parent.mkdir(parents=True, exist_ok=True)
+
+            handler = logging.FileHandler(conversation_file, encoding="utf-8")
+            handler.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+            conversation_logger.addHandler(handler)
+
+            logger.info(
+                "Conversation logging enabled",
+                conversation_log_path=str(conversation_file)
+            )
+        except OSError as exc:
+            logger.warning(
+                "Failed to initialize conversation logger",
+                conversation_log_path=conversation_log_path,
+                error=str(exc)
+            )
+
 
 def _load_agent_config(logger: structlog.BoundLogger) -> tuple[str, Optional[str]]:
     """Load agent configuration from YAML file.
