@@ -43,6 +43,7 @@ Key Benefits:
 import asyncio
 import base64
 import json
+import logging
 import os
 import time
 from typing import AsyncIterator, Dict, Optional
@@ -512,6 +513,9 @@ class OpenAIRealtimeClient(AiDuplexBase):
             # Final transcription result
             transcript = data.get("transcript")
             self._logger.info(f"✅ Transcription completed: {transcript}")
+            if transcript:
+                conversation_logger = logging.getLogger("conversation")
+                conversation_logger.info("USER: %s", transcript)
             await self._event_queue.put(
                 AiEvent(
                     type=AiEventType.TRANSCRIPT_FINAL,
@@ -529,6 +533,9 @@ class OpenAIRealtimeClient(AiDuplexBase):
             # AI response transcript completed
             transcript = data.get("transcript")
             self._logger.info(f"✅ AI transcript done: {transcript}")
+            if transcript:
+                conversation_logger = logging.getLogger("conversation")
+                conversation_logger.info("AGENT: %s", transcript)
 
         elif msg_type == "response.output_audio.delta":
             # Audio chunk from AI (base64 encoded G.711 μ-law @ 8kHz)

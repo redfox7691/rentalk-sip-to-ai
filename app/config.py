@@ -2,7 +2,7 @@
 
 import os
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 from dotenv import load_dotenv
 
@@ -133,6 +133,7 @@ class SystemConfig:
     reconnect_delay_sec: int = 5
     max_reconnect_attempts: int = 3
     ai_connection_timeout_sec: int = 10  # Timeout for AI WebSocket connection
+    conversation_log_path: Optional[str] = "conversations.log"
 
 
 class Config:
@@ -174,12 +175,20 @@ class Config:
             reconnect_delay_sec=int(os.getenv("RECONNECT_DELAY_SEC", "5")),
             max_reconnect_attempts=int(os.getenv("MAX_RECONNECT_ATTEMPTS", "3")),
             ai_connection_timeout_sec=int(os.getenv("AI_CONNECTION_TIMEOUT_SEC", "10")),
+            conversation_log_path=self._get_conversation_log_path(),
         )
 
     @classmethod
     def load(cls) -> "Config":
         """Load configuration from environment."""
         return cls()
+
+    @staticmethod
+    def _get_conversation_log_path() -> Optional[str]:
+        """Resolve conversation log path from environment."""
+        value = os.getenv("CONVERSATION_LOG_PATH", "conversations.log")
+        value = value.strip()
+        return value or None
 
 
 config = Config.load()
