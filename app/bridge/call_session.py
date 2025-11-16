@@ -8,6 +8,8 @@ import structlog
 
 from app.bridge.audio_adapter import AudioAdapter
 from app.utils.constants import AudioConstants
+from app.utils.conversation_mailer import extract_last_call, send_conversation_email
+from app.config import config
 
 
 class CallSession:
@@ -178,6 +180,34 @@ class CallSession:
             self._logger.error(f"Error closing audio adapter: {e}")
 
         self._logger.info("Call session stopped")
+
+        self._send_conversation_email()
+
+    def _send_conversation_email(self) -> None:
+        """Extract last conversation from log and send via email."""
+
+        log_path = config.system.conversation_log_path
+        if not log_path:
+            return
+
+        try:
+            conversation = extract_last_call(log_path)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self._logger.error("Failed to extract conversation log", error=str(exc))
+            return
+
+        if not conversation:
+            return
+
+        call_id = self._call_id or getattr(self._ai, "call_id", "unknown")
+        caller = self._caller or getattr(self._ai, "caller", "unknown")
+        subject = f"RenTalk conversation summary - call_id={call_id} from={caller}"
+
+        try:
+            send_conversation_email(subject, conversation)
+            self._logger.info("Conversation email sent", call_id=call_id)
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self._logger.error("Failed to send conversation email", error=str(exc))
 
     async def _uplink_safe(self) -> None:
         """Safe uplink with proper exception handling and cleanup."""
