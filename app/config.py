@@ -129,6 +129,7 @@ class SystemConfig:
 
     log_level: str = "INFO"
     log_format: Literal["json", "text"] = "json"
+    conversation_log_path: str = ""
     health_check_interval_sec: int = 30
     reconnect_delay_sec: int = 5
     max_reconnect_attempts: int = 3
@@ -170,6 +171,7 @@ class Config:
         self.system = SystemConfig(
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             log_format=os.getenv("LOG_FORMAT", "json"),  # type: ignore
+            conversation_log_path=os.getenv("CONVERSATION_LOG_PATH", ""),
             health_check_interval_sec=int(os.getenv("HEALTH_CHECK_INTERVAL_SEC", "30")),
             reconnect_delay_sec=int(os.getenv("RECONNECT_DELAY_SEC", "5")),
             max_reconnect_attempts=int(os.getenv("MAX_RECONNECT_ATTEMPTS", "3")),

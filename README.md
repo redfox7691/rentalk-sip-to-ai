@@ -42,7 +42,14 @@ Simple passthrough bridge: **SIP (G.711 μ-law @ 8kHz)** ↔ **AI voice models**
    SIP_DOMAIN=192.168.1.100
    SIP_TRANSPORT_TYPE=udp
    SIP_PORT=6060
+
+   # Optional: persist per-call transcripts
+   CONVERSATION_LOG_PATH=logs/conversations.log
    ```
+
+   When `CONVERSATION_LOG_PATH` is set to a writable file, every user and agent
+   utterance is appended as a plain-text line (e.g. `2025-11-15 11:36:25,094 USER:
+   Hello`). Ensure the directory exists and is writable by the application.
 
    **Optional:** Create `agent_prompt.yaml` for custom agent personality:
    ```yaml

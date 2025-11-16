@@ -53,6 +53,7 @@ from websockets.client import WebSocketClientProtocol
 
 from app.ai.duplex_base import AiDuplexBase, AiEvent, AiEventType
 from app.utils.codec import Codec
+from app.utils.conversation_logger import conversation_logger
 
 
 class OpenAIRealtimeClient(AiDuplexBase):
@@ -512,6 +513,7 @@ class OpenAIRealtimeClient(AiDuplexBase):
             # Final transcription result
             transcript = data.get("transcript")
             self._logger.info(f"✅ Transcription completed: {transcript}")
+            conversation_logger.log_user(transcript)
             await self._event_queue.put(
                 AiEvent(
                     type=AiEventType.TRANSCRIPT_FINAL,
@@ -529,6 +531,7 @@ class OpenAIRealtimeClient(AiDuplexBase):
             # AI response transcript completed
             transcript = data.get("transcript")
             self._logger.info(f"✅ AI transcript done: {transcript}")
+            conversation_logger.log_agent(transcript)
 
         elif msg_type == "response.output_audio.delta":
             # Audio chunk from AI (base64 encoded G.711 μ-law @ 8kHz)

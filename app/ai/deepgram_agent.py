@@ -19,6 +19,7 @@ import websockets
 from websockets.client import WebSocketClientProtocol
 
 from app.ai.duplex_base import AiDuplexBase, AiEvent, AiEventType
+from app.utils.conversation_logger import conversation_logger
 
 
 class DeepgramAgentClient(AiDuplexBase):
@@ -415,8 +416,7 @@ class DeepgramAgentClient(AiDuplexBase):
                 self._logger.info("Connected to Deepgram Voice Agent")
 
             elif msg_type == "ConversationText":
-                # Log conversation for debugging (optional)
-                pass
+                self._log_conversation_text(data)
 
             elif msg_type == "History":
                 # Conversation history (optional)
@@ -424,6 +424,44 @@ class DeepgramAgentClient(AiDuplexBase):
 
         except Exception as e:
             self._logger.error("Failed to handle JSON message", error=str(e))
+
+    def _log_conversation_text(self, payload: Dict) -> None:
+        """Extract and persist user/agent utterances from Deepgram payloads."""
+
+        role = str(payload.get("role") or payload.get("speaker") or "agent").lower()
+
+        text: Optional[str] = None
+        for key in ("text", "transcript", "message"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                text = value.strip()
+                break
+
+        if not text:
+            content = payload.get("content")
+            if isinstance(content, list):
+                parts: list[str] = []
+                for item in content:
+                    if isinstance(item, dict):
+                        if isinstance(item.get("text"), str):
+                            parts.append(item["text"].strip())
+                        elif isinstance(item.get("transcript"), str):
+                            parts.append(item["transcript"].strip())
+                    elif isinstance(item, str):
+                        parts.append(item.strip())
+
+                joined = " ".join(part for part in parts if part)
+                text = joined.strip() if joined else None
+            elif isinstance(content, str) and content.strip():
+                text = content.strip()
+
+        if not text:
+            return
+
+        if role == "user":
+            conversation_logger.log_user(text)
+        else:
+            conversation_logger.log_agent(text)
 
     async def receive_chunks(self) -> AsyncIterator[bytes]:
         """Receive audio chunks from Deepgram.
