@@ -89,7 +89,7 @@ class AsyncSIPServer:
                     # Create snapshot to avoid dict modification during iteration
                     ended_calls = [
                         call_id for call_id, call in list(self.active_calls.items())
-                        if not call._running
+                        if call.has_completed
                     ]
 
                     # Collect calls to release ports

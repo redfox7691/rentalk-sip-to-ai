@@ -66,6 +66,8 @@ class AsyncCall:
         self.call_session: Optional['CallSession'] = None  # AI session
 
         self._running = False
+        self._has_started = False
+        self._has_completed = False
         self._session_task: Optional[asyncio.Task] = None
 
     async def setup(
@@ -177,6 +179,8 @@ class AsyncCall:
             raise RuntimeError("Call not fully setup - call setup() first")
 
         self._running = True
+        self._has_started = True
+        self._has_completed = False
 
         logger.info("Call starting", call_id=self.call_id)
 
@@ -184,92 +188,94 @@ class AsyncCall:
         max_retries = 3
         should_continue = True
 
-        for attempt in range(max_retries):
-            if not should_continue:
-                break
+        try:
+            for attempt in range(max_retries):
+                if not should_continue:
+                    break
 
-            try:
-                async with asyncio.TaskGroup() as tg:
-                    # RTP session
-                    tg.create_task(
-                        self.rtp_session.run(),
-                        name=f"rtp-{self.call_id[:8]}"
-                    )
+                try:
+                    async with asyncio.TaskGroup() as tg:
+                        # RTP session
+                        tg.create_task(
+                            self.rtp_session.run(),
+                            name=f"rtp-{self.call_id[:8]}"
+                        )
 
-                    # Audio bridge
-                    tg.create_task(
-                        self.audio_bridge.run(),
-                        name=f"bridge-{self.call_id[:8]}"
-                    )
+                        # Audio bridge
+                        tg.create_task(
+                            self.audio_bridge.run(),
+                            name=f"bridge-{self.call_id[:8]}"
+                        )
 
-                    # AI session
-                    self._session_task = tg.create_task(
-                        self.call_session.start(),
-                        name=f"session-{self.call_id[:8]}"
-                    )
+                        # AI session
+                        self._session_task = tg.create_task(
+                            self.call_session.start(),
+                            name=f"session-{self.call_id[:8]}"
+                        )
 
-                    logger.info("Call TaskGroup started", call_id=self.call_id)
+                        logger.info("Call TaskGroup started", call_id=self.call_id)
 
-                # Tasks completed normally
-                should_continue = False
+                    # Tasks completed normally
+                    should_continue = False
 
-            except* PortBindError as eg:
-                # RTP port binding failed
-                port_error = eg.exceptions[0]
-                logger.warning(
-                    "RTP port bind failed, retrying with new port",
-                    call_id=self.call_id,
-                    failed_port=port_error.port,
-                    attempt=attempt + 1,
-                    max_retries=max_retries
-                )
-
-                if attempt < max_retries - 1:
-                    # Release failed port and allocate new one
-                    await self.sip.release_rtp_port(port_error.port)
-                    new_port = await self.sip.allocate_rtp_port()
-
-                    # Update RTP session with new port
-                    self.rtp_session.update_port(new_port)
-                    self.local_rtp_port = new_port
-
-                    logger.info(
-                        "Retrying with new RTP port",
+                except* PortBindError as eg:
+                    # RTP port binding failed
+                    port_error = eg.exceptions[0]
+                    logger.warning(
+                        "RTP port bind failed, retrying with new port",
                         call_id=self.call_id,
-                        new_port=new_port
-                    )
-                else:
-                    # Max retries exceeded
-                    logger.error(
-                        "Max RTP port bind retries exceeded",
-                        call_id=self.call_id,
+                        failed_port=port_error.port,
+                        attempt=attempt + 1,
                         max_retries=max_retries
                     )
+
+                    if attempt < max_retries - 1:
+                        # Release failed port and allocate new one
+                        await self.sip.release_rtp_port(port_error.port)
+                        new_port = await self.sip.allocate_rtp_port()
+
+                        # Update RTP session with new port
+                        self.rtp_session.update_port(new_port)
+                        self.local_rtp_port = new_port
+
+                        logger.info(
+                            "Retrying with new RTP port",
+                            call_id=self.call_id,
+                            new_port=new_port
+                        )
+                    else:
+                        # Max retries exceeded
+                        logger.error(
+                            "Max RTP port bind retries exceeded",
+                            call_id=self.call_id,
+                            max_retries=max_retries
+                        )
+                        should_continue = False
+                        raise
+
+                except* asyncio.CancelledError:
+                    # Normal cancellation during shutdown
+                    logger.debug("Call tasks cancelled (normal shutdown)", call_id=self.call_id)
                     should_continue = False
-                    raise
 
-            except* asyncio.CancelledError:
-                # Normal cancellation during shutdown
-                logger.debug("Call tasks cancelled (normal shutdown)", call_id=self.call_id)
-                should_continue = False
-
-            except* Exception as eg:
-                # Unexpected exceptions
-                logger.error(
-                    "Call TaskGroup exceptions",
-                    call_id=self.call_id,
-                    count=len(eg.exceptions)
-                )
-                for exc in eg.exceptions:
+                except* Exception as eg:
+                    # Unexpected exceptions
                     logger.error(
-                        f"Exception: {type(exc).__name__}: {exc}",
+                        "Call TaskGroup exceptions",
                         call_id=self.call_id,
-                        exc_info=exc
+                        count=len(eg.exceptions)
                     )
-                should_continue = False
-
-        self._running = False
-        logger.info("Call ended", call_id=self.call_id)
+                    for exc in eg.exceptions:
+                        logger.error(
+                            f"Exception: {type(exc).__name__}: {exc}",
+                            call_id=self.call_id,
+                            exc_info=exc
+                        )
+                    should_continue = False
+        finally:
+            self._running = False
+            self._has_completed = True
+            logger.info("Call ended", call_id=self.call_id)
 
     async def hangup(self) -> None:
         """Hangup call (send BYE)."""
@@ -300,3 +306,13 @@ class AsyncCall:
             await self.call_session.stop()
 
         logger.info("Call stopped", call_id=self.call_id)
+
+    @property
+    def has_started(self) -> bool:
+        """Whether the call lifecycle has started."""
+        return self._has_started
+
+    @property
+    def has_completed(self) -> bool:
+        """Whether the call finished running TaskGroup teardown."""
+        return self._has_started and self._has_completed
