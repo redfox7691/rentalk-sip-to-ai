@@ -91,6 +91,7 @@ class AsyncCall:
 
         # Store AI session
         self.call_session = call_session
+        self.call_session.set_hangup_handler(self.hangup)
 
         logger.info(
             "Call setup complete",

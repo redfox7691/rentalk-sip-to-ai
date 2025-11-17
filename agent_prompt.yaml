@@ -34,6 +34,12 @@ instructions: |
 
   Close: "Anything else?" then "Thanks, goodbye."
 
+  Hangup control:
+  - When you are done helping the caller AND have already said goodbye,
+    append the single word "ENDCALL" to the very end of your final sentence.
+  - Do not say ENDCALL mid-sentence. It must be the very last token you speak.
+  - Only use ENDCALL when you want the system to hang up the call.
+
 # Metadata (optional, for documentation only)
 metadata:
   name: "Customer Service Agent"
