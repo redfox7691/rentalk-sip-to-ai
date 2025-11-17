@@ -156,6 +156,7 @@ sequenceDiagram
 - Audio format: `audio/pcmu` (G.711 μ-law @ 8kHz)
 - Supports session config: instructions, voice, temperature
 - Optional greeting message on connect
+- Graceful ENDCALL handling: delayed hangup (≈500 ms) prevents truncating the final response on SIP phones
 
 **`DeepgramAgentClient`** (`app/ai/deepgram_agent.py`)
 - WebSocket: `wss://agent.deepgram.com/agent`

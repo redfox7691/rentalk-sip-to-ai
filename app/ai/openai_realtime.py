@@ -118,7 +118,8 @@ class OpenAIRealtimeClient(AiDuplexBase):
 
         self._logger = structlog.get_logger(__name__)
         self._hangup_handler: Optional[Callable[[], Awaitable[None]]] = None
-        self._endcall_triggered = False
+        self._endcall_scheduled = False
+        self._endcall_delay_s = 0.5
 
     def register_hangup_handler(
         self,
@@ -643,18 +644,29 @@ class OpenAIRealtimeClient(AiDuplexBase):
     async def _trigger_endcall(self, source: str) -> None:
         """Invoke registered hangup handler once when ENDCALL is detected."""
 
-        if self._endcall_triggered:
+        if self._endcall_scheduled:
             self._logger.debug("ENDCALL marker already processed", source=source)
             return
 
-        self._endcall_triggered = True
-        self._logger.info("ENDCALL marker detected - requesting hangup", source=source)
+        self._endcall_scheduled = True
+        self._logger.info(
+            "ENDCALL marker detected - scheduling delayed hangup",
+            source=source,
+            delay_ms=int(self._endcall_delay_s * 1000)
+        )
 
-        if not self._hangup_handler:
-            self._logger.warning("No hangup handler registered - cannot hang up")
-            return
+        asyncio.create_task(self._delayed_hangup())
+
+    async def _delayed_hangup(self) -> None:
+        """Delay hangup slightly to avoid truncating the final audio chunk."""
 
         try:
+            await asyncio.sleep(self._endcall_delay_s)
+
+            if not self._hangup_handler:
+                self._logger.warning("No hangup handler registered - cannot hang up")
+                return
+
             await self._hangup_handler()
         except Exception as exc:  # pragma: no cover - defensive logging
             self._logger.error("Hangup handler failed", error=str(exc))
