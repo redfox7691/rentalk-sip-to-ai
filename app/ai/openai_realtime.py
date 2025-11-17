@@ -46,7 +46,7 @@ import json
 import logging
 import os
 import time
-from typing import AsyncIterator, Dict, Optional
+from typing import AsyncIterator, Awaitable, Callable, Dict, Optional
 
 import structlog
 import websockets
@@ -117,6 +117,16 @@ class OpenAIRealtimeClient(AiDuplexBase):
         self._audio_chunks_received = 0
 
         self._logger = structlog.get_logger(__name__)
+        self._hangup_handler: Optional[Callable[[], Awaitable[None]]] = None
+        self._endcall_triggered = False
+
+    def register_hangup_handler(
+        self,
+        handler: Callable[[], Awaitable[None]]
+    ) -> None:
+        """Register callback that hangs up the SIP leg when ENDCALL is detected."""
+
+        self._hangup_handler = handler
 
     async def connect(self) -> None:
         """Connect to OpenAI Realtime API."""
@@ -533,25 +543,19 @@ class OpenAIRealtimeClient(AiDuplexBase):
             # AI response transcript completed
             transcript = data.get("transcript")
             self._logger.info(f"✅ AI transcript done: {transcript}")
-            if transcript:
-                conversation_logger = logging.getLogger("conversation")
-                conversation_logger.info("AGENT: %s", transcript)
+            await self._handle_agent_transcript(transcript, source="audio_transcript")
 
         elif msg_type == "response.output_audio_transcript.done":
             # Newer schema for AI audio transcript completions
             transcript = data.get("transcript")
             self._logger.info(f"✅ AI output audio transcript done: {transcript}")
-            if transcript:
-                conversation_logger = logging.getLogger("conversation")
-                conversation_logger.info("AGENT: %s", transcript)
+            await self._handle_agent_transcript(transcript, source="output_audio_transcript")
 
         elif msg_type == "response.output_text.done":
             # Textual response completion events
             transcript = data.get("text") or data.get("output_text")
             self._logger.info(f"✅ AI output text done: {transcript}")
-            if transcript:
-                conversation_logger = logging.getLogger("conversation")
-                conversation_logger.info("AGENT: %s", transcript)
+            await self._handle_agent_transcript(transcript, source="output_text")
 
         elif msg_type == "response.output_audio.delta":
             # Audio chunk from AI (base64 encoded G.711 μ-law @ 8kHz)
@@ -610,4 +614,48 @@ class OpenAIRealtimeClient(AiDuplexBase):
         else:
             # Log unhandled events for debugging
             self._logger.debug(f"Unhandled event: {msg_type}", data=data)
+
+    async def _handle_agent_transcript(self, transcript: Optional[str], source: str) -> None:
+        """Log agent transcript and detect ENDCALL markers."""
+
+        if not transcript:
+            return
+
+        conversation_logger = logging.getLogger("conversation")
+        conversation_logger.info("AGENT: %s", transcript)
+
+        if not self._contains_endcall(transcript):
+            return
+
+        await self._trigger_endcall(source)
+
+    def _contains_endcall(self, transcript: str) -> bool:
+        """Return True if transcript requests a controlled hangup."""
+
+        normalized = transcript.strip()
+        if not normalized:
+            return False
+
+        normalized = normalized.replace("\n", " ")
+        normalized = normalized.rstrip(" .!?,")
+        return normalized.upper().endswith("ENDCALL")
+
+    async def _trigger_endcall(self, source: str) -> None:
+        """Invoke registered hangup handler once when ENDCALL is detected."""
+
+        if self._endcall_triggered:
+            self._logger.debug("ENDCALL marker already processed", source=source)
+            return
+
+        self._endcall_triggered = True
+        self._logger.info("ENDCALL marker detected - requesting hangup", source=source)
+
+        if not self._hangup_handler:
+            self._logger.warning("No hangup handler registered - cannot hang up")
+            return
+
+        try:
+            await self._hangup_handler()
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self._logger.error("Hangup handler failed", error=str(exc))
 

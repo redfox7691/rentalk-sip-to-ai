@@ -122,3 +122,23 @@ class TestCallSession:
 
         shutdown_time = time.time() - stop_time
         assert shutdown_time < 2.0, f"Shutdown took {shutdown_time:.1f}s, too slow"
+
+    @pytest.mark.asyncio
+    async def test_request_hangup_invokes_handler(self) -> None:
+        """Ensure request_hangup triggers the registered BYE coroutine."""
+
+        ai_client = MockDuplexClient(sample_rate=8000, frame_ms=20)
+        audio_adapter = AudioAdapter(uplink_capacity=5, downlink_capacity=5)
+        session = CallSession(audio_adapter=audio_adapter, ai_client=ai_client)
+
+        hangup_called = False
+
+        async def fake_hangup() -> None:
+            nonlocal hangup_called
+            hangup_called = True
+
+        session.set_hangup_handler(fake_hangup)
+
+        await session.request_hangup()
+
+        assert hangup_called is True

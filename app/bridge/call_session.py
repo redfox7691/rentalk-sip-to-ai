@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Optional
+from typing import Awaitable, Callable, Optional
 
 import structlog
 
@@ -41,6 +41,8 @@ class CallSession:
         self._call_id: Optional[str] = None
         self._caller: Optional[str] = None
         self._header_logged = False
+        self._hangup_handler: Optional[Callable[[], Awaitable[None]]] = None
+        self._hangup_requested = False
 
     def set_call_context(
         self,
@@ -51,6 +53,14 @@ class CallSession:
 
         self._call_id = call_id
         self._caller = caller
+
+    def set_hangup_handler(
+        self,
+        handler: Callable[[], Awaitable[None]]
+    ) -> None:
+        """Register coroutine used to send SIP BYE when AI requests hangup."""
+
+        self._hangup_handler = handler
 
     async def start(self) -> None:
         """Start the call session using asyncio.TaskGroup.
@@ -208,6 +218,30 @@ class CallSession:
             self._logger.info("Conversation email sent", call_id=call_id)
         except Exception as exc:  # pragma: no cover - defensive logging
             self._logger.error("Failed to send conversation email", error=str(exc))
+
+    async def request_hangup(self) -> None:
+        """Trigger call teardown after AI issues ENDCALL."""
+
+        if self._hangup_requested:
+            self._logger.info("Hangup already requested - ignoring duplicate signal")
+            return
+
+        self._hangup_requested = True
+        self._logger.info("AI requested controlled hangup")
+
+        if self._hangup_handler:
+            try:
+                await self._hangup_handler()
+                self._logger.info("SIP BYE sent successfully")
+            except Exception as exc:  # pragma: no cover - defensive logging
+                self._logger.error("Failed to send SIP BYE", error=str(exc))
+        else:
+            self._logger.warning("No hangup handler registered - cannot send BYE")
+
+        try:
+            await self.stop()
+        except Exception as exc:  # pragma: no cover - defensive logging
+            self._logger.error("Error stopping session after hangup", error=str(exc))
 
     async def _uplink_safe(self) -> None:
         """Safe uplink with proper exception handling and cleanup."""

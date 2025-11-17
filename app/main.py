@@ -241,6 +241,9 @@ async def run_real_mode() -> None:
                 ai_client=ai_client
             )
 
+            if hasattr(ai_client, "register_hangup_handler"):
+                ai_client.register_hangup_handler(call_session.request_hangup)
+
             from_header = call.invite.headers.get("From", {})
             caller_address = from_header.get("address")
             caller_display = from_header.get("display_name")
