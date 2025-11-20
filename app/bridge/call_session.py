@@ -43,6 +43,7 @@ class CallSession:
         self._header_logged = False
         self._hangup_handler: Optional[Callable[[], Awaitable[None]]] = None
         self._hangup_requested = False
+        self._stopped = False
 
     def set_call_context(
         self,
@@ -158,12 +159,13 @@ class CallSession:
 
     async def stop(self) -> None:
         """Stop the call session."""
-        if not self._running:
+        if self._stopped:
             return
 
         self._logger.info("Stopping call session...")
 
         self._running = False
+        self._stopped = True
 
         # Cancel the TaskGroup background task
         if self._task_group_task:
