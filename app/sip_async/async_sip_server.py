@@ -53,6 +53,15 @@ class AsyncSIPServer:
         self._port_lock = asyncio.Lock()
 
         self._running = False
+        self._allowed_methods = [
+            SIPMethod.INVITE.value,
+            SIPMethod.ACK.value,
+            SIPMethod.BYE.value,
+            SIPMethod.CANCEL.value,
+            SIPMethod.OPTIONS.value,
+            SIPMethod.INFO.value,
+            SIPMethod.UPDATE.value,
+        ]
 
     async def start(self) -> None:
         """Start SIP server (create UDP endpoint)."""
@@ -195,8 +204,20 @@ class AsyncSIPServer:
         elif msg.method == SIPMethod.BYE:
             await self._handle_bye(msg, addr)
 
+        elif msg.method == SIPMethod.CANCEL:
+            await self._handle_cancel(msg, addr)
+
+        elif msg.method == SIPMethod.OPTIONS:
+            await self._handle_options(msg, addr)
+
+        elif msg.method == SIPMethod.REGISTER:
+            await self._handle_register(msg, addr)
+
+        elif msg.method in (SIPMethod.INFO, SIPMethod.UPDATE):
+            await self._handle_in_dialog(msg, addr)
+
         else:
-            logger.warning("Unsupported SIP method", method=msg.method)
+            await self._handle_unknown_method(msg, addr)
 
     async def _handle_invite(self, invite: SIPMessage, addr: tuple) -> None:
         """Handle INVITE request (create call).
@@ -256,6 +277,32 @@ class AsyncSIPServer:
                 await self.release_rtp_port(local_rtp_port)
 
             # TODO: Send 500 Internal Server Error
+
+    async def _handle_cancel(self, cancel: SIPMessage, addr: tuple) -> None:
+        """Handle CANCEL request to terminate pending INVITE."""
+        call_id = cancel.headers.get("Call-ID", "")
+
+        logger.info("Received CANCEL", call_id=call_id)
+
+        ok_response = self._build_response(cancel, 200, "OK")
+        await self.send_message(ok_response, addr)
+
+        async with self._calls_lock:
+            call = self.active_calls.pop(call_id, None)
+
+        if call:
+            terminated = self._build_response(
+                call.invite,
+                487,
+                "Request Terminated",
+                to_tag=call.dialog.local_tag
+            )
+            await self.send_message(terminated, call.invite.remote_addr)
+
+            await call.stop()
+            await self.release_rtp_port(call.local_rtp_port)
+
+            logger.info("Cancelled INVITE", call_id=call_id)
 
     async def _run_call_callback(self, call: AsyncCall) -> None:
         """Run call callback and start call.
@@ -355,6 +402,47 @@ class AsyncSIPServer:
             # Fallback for unknown headers
             return [f"{header_name}: {header_value}"]
 
+    @staticmethod
+    def _ensure_to_tag(header_value: dict, to_tag: Optional[str]) -> dict:
+        """Ensure the To header contains a tag for responses."""
+        updated = dict(header_value)
+        if not updated.get("tag"):
+            updated["tag"] = to_tag or f"srv{random.randint(1000, 9999)}"
+        return updated
+
+    def _build_response(
+        self,
+        request: SIPMessage,
+        status_code: int,
+        status_text: str,
+        extra_headers: Optional[dict[str, str]] = None,
+        to_tag: Optional[str] = None,
+        body: str = ""
+    ) -> bytes:
+        """Build a SIP response mirroring core headers from the request."""
+        lines = [f"SIP/2.0 {status_code} {status_text}"]
+
+        for header in ["Via", "From", "To", "Call-ID", "CSeq"]:
+            if header in request.headers:
+                value = request.headers[header]
+                if header == "To" and isinstance(value, dict):
+                    value = self._ensure_to_tag(value, to_tag)
+                lines.extend(self._format_sip_header(header, value))
+
+        if extra_headers:
+            for name, value in extra_headers.items():
+                lines.append(f"{name}: {value}")
+
+        if body:
+            lines.append(f"Content-Length: {len(body)}")
+            lines.append("")
+            lines.append(body)
+        else:
+            lines.append("Content-Length: 0")
+            lines.append("")
+
+        return "\r\n".join(lines).encode("utf-8")
+
     async def _handle_bye(self, bye: SIPMessage, addr: tuple) -> None:
         """Handle BYE request (hangup).
 
@@ -388,6 +476,51 @@ class AsyncSIPServer:
         await self.send_message(response, addr)
 
         logger.debug("Sent 200 OK for BYE", call_id=call_id)
+
+    async def _handle_options(self, options: SIPMessage, addr: tuple) -> None:
+        """Handle OPTIONS keepalive with Allow header."""
+        headers = {"Allow": ", ".join(self._allowed_methods)}
+        response = self._build_response(options, 200, "OK", extra_headers=headers)
+        await self.send_message(response, addr)
+
+        logger.debug("OPTIONS answered", call_id=options.headers.get("Call-ID", ""))
+
+    async def _handle_register(self, register: SIPMessage, addr: tuple) -> None:
+        """Reject REGISTER to indicate userless server."""
+        headers = {"Allow": ", ".join(self._allowed_methods)}
+        response = self._build_response(register, 405, "Method Not Allowed", extra_headers=headers)
+        await self.send_message(response, addr)
+
+        logger.info("REGISTER rejected", call_id=register.headers.get("Call-ID", ""))
+
+    async def _handle_in_dialog(self, request: SIPMessage, addr: tuple) -> None:
+        """Handle INFO/UPDATE that may be out-of-dialog."""
+        call_id = request.headers.get("Call-ID", "")
+
+        async with self._calls_lock:
+            call_exists = call_id in self.active_calls
+
+        if call_exists:
+            response = self._build_response(request, 200, "OK")
+        else:
+            response = self._build_response(request, 481, "Call/Transaction Does Not Exist")
+
+        await self.send_message(response, addr)
+
+        logger.info(
+            "Handled in-dialog request",
+            method=request.method.value if request.method else request.method_str,
+            call_id=call_id,
+            in_dialog=call_exists
+        )
+
+    async def _handle_unknown_method(self, msg: SIPMessage, addr: tuple) -> None:
+        """Respond to unsupported or unknown SIP methods."""
+        headers = {"Allow": ", ".join(self._allowed_methods)}
+        response = self._build_response(msg, 501, "Not Implemented", extra_headers=headers)
+        await self.send_message(response, addr)
+
+        logger.warning("Unsupported SIP method", method=msg.method or msg.method_str)
 
     async def _handle_response(self, response: SIPMessage, addr: tuple) -> None:
         """Handle SIP response.
