@@ -1,6 +1,7 @@
 """SIP protocol implementation (simplified, inspired by pyVoIP).
 
-Minimal SIP implementation supporting only INVITE/ACK/BYE for incoming calls.
+Minimal SIP implementation supporting INVITE/ACK/BYE and basic handling for
+common maintenance requests.
 """
 
 import asyncio
@@ -21,6 +22,10 @@ class SIPMethod(Enum):
     ACK = "ACK"
     BYE = "BYE"
     CANCEL = "CANCEL"
+    OPTIONS = "OPTIONS"
+    REGISTER = "REGISTER"
+    INFO = "INFO"
+    UPDATE = "UPDATE"
 
 
 class SIPMessageType(Enum):
@@ -41,6 +46,7 @@ class SIPMessage:
 
     # Request fields
     method: Optional[SIPMethod] = None
+    method_str: str = ""
     request_uri: str = ""
 
     # Response fields
@@ -96,6 +102,7 @@ class SIPMessage:
                 self.message_type = SIPMessageType.REQUEST
                 parts = first_line.split(' ')
                 if len(parts) >= 2:
+                    self.method_str = parts[0]
                     try:
                         self.method = SIPMethod(parts[0])
                     except ValueError:
