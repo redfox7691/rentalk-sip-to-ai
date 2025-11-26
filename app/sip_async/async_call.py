@@ -279,6 +279,10 @@ class AsyncCall:
 
     async def hangup(self) -> None:
         """Hangup call (send BYE)."""
+        if self._has_completed:
+            # Already torn down
+            return
+
         self._running = False
 
         # Build and send BYE
@@ -288,8 +292,10 @@ class AsyncCall:
         )
 
         await self.sip.send_message(bye_msg, self.invite.remote_addr)
-
         logger.info("BYE sent", call_id=self.call_id)
+
+        # Ensure media/AI teardown happens immediately to avoid stuck calls
+        await self.stop()
 
     async def stop(self) -> None:
         """Stop all call tasks."""
