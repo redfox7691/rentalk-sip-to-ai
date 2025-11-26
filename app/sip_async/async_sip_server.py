@@ -456,10 +456,17 @@ class AsyncSIPServer:
 
         # Find and stop call (thread-safe)
         async with self._calls_lock:
-            call = self.active_calls.get(call_id)
+            call = self.active_calls.pop(call_id, None)
 
         if call:
             await call.stop()
+            await self.release_rtp_port(call.local_rtp_port)
+
+            logger.info(
+                "Call ended via BYE",
+                call_id=call_id,
+                active_count=len(self.active_calls)
+            )
 
         # Build 200 OK with properly formatted headers (RFC 3261)
         lines = ["SIP/2.0 200 OK"]

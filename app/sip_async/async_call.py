@@ -295,6 +295,11 @@ class AsyncCall:
         """Stop all call tasks."""
         self._running = False
 
+        # Mark lifecycle as completed so the server can clean up state
+        self._has_completed = True
+        if not self._has_started:
+            self._has_started = True
+
         # Stop components
         if self.rtp_session:
             await self.rtp_session.stop()
