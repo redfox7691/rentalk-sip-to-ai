@@ -33,6 +33,7 @@ class RTPAudioBridge:
         self.rtp = rtp_session
         self.adapter = audio_adapter
         self._running = False
+        self._tasks: list[asyncio.Task] = []
 
         # Statistics
         self._uplink_frames = 0
@@ -41,22 +42,25 @@ class RTPAudioBridge:
     async def run(self) -> None:
         """Run bidirectional audio bridge with TaskGroup."""
         self._running = True
+        self._tasks.clear()
 
         logger.info("AudioBridge starting")
 
         try:
             async with asyncio.TaskGroup() as tg:
                 # Uplink: RTP → AudioAdapter
-                tg.create_task(
+                uplink = tg.create_task(
                     self._uplink_task(),
                     name="audiobridge-uplink"
                 )
+                self._tasks.append(uplink)
 
                 # Downlink: AudioAdapter → RTP
-                tg.create_task(
+                downlink = tg.create_task(
                     self._downlink_task(),
                     name="audiobridge-downlink"
                 )
+                self._tasks.append(downlink)
 
                 logger.info("AudioBridge TaskGroup started")
 
@@ -166,5 +170,40 @@ class RTPAudioBridge:
 
     async def stop(self) -> None:
         """Stop the audio bridge."""
+        logger.info(
+            "AudioBridge stop requested",
+            pending_downlink=self.adapter.downlink_size(),
+            pending_tx=self.rtp.tx_queue.qsize()
+        )
+
+        # Flush any partial greeting so the caller hears the full message
+        await self.adapter.flush_pending_downlink()
+
+        # Allow in-flight audio to be delivered before tearing down transport
+        await self._drain_queues()
+
         self._running = False
-        logger.info("AudioBridge stop requested")
+
+        for task in self._tasks:
+            task.cancel()
+
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+
+        self._tasks.clear()
+
+        logger.info("AudioBridge stop completed")
+
+    async def _drain_queues(self, timeout: float = 0.5) -> None:
+        """Wait briefly for downlink and RTP queues to empty."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+
+        while loop.time() < deadline:
+            downlink_pending = self.adapter.downlink_size()
+            tx_pending = self.rtp.tx_queue.qsize()
+
+            if downlink_pending == 0 and tx_pending == 0:
+                break
+
+            await asyncio.sleep(0.01)

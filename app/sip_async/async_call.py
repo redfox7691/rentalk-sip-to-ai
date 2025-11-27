@@ -307,14 +307,14 @@ class AsyncCall:
             self._has_started = True
 
         # Stop components
-        if self.rtp_session:
-            await self.rtp_session.stop()
-
         if self.audio_bridge:
             await self.audio_bridge.stop()
 
         if self.call_session:
             await self.call_session.stop()
+
+        if self.rtp_session:
+            await self.rtp_session.stop()
 
         logger.info("Call stopped", call_id=self.call_id)
 
