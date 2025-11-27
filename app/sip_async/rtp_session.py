@@ -457,6 +457,13 @@ class RTPSession:
 
     async def stop(self) -> None:
         """Stop RTP session (thread-safe)."""
+        if self._running:
+            # Give the send loop time to flush queued audio before shutting down
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self.config.frame_interval * 5  # ~100ms
+            while not self.tx_queue.empty() and loop.time() < deadline:
+                await asyncio.sleep(self.config.frame_interval / 2)
+
         self._running = False
 
         # Close and clear transport with lock protection

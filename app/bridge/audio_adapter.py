@@ -165,6 +165,28 @@ class AudioAdapter:
         """
         return await self._downlink_stream.receive()
 
+    def downlink_size(self) -> int:
+        """Current number of frames waiting to be sent to RTP."""
+        return self._downlink_stream._queue.qsize()
+
+    async def flush_pending_downlink(self) -> None:
+        """Flush any partial downlink frame into the queue with padding."""
+        if len(self._pending_bytes) == 0:
+            return
+
+        if len(self._pending_bytes) < AudioConstants.PCM16_FRAME_SIZE:
+            padding_size = AudioConstants.PCM16_FRAME_SIZE - len(self._pending_bytes)
+            padded_frame = self._pending_bytes + b"\x00" * padding_size
+            await self._downlink_stream.send(padded_frame)
+            self._logger.debug(
+                "Flushed partial downlink frame", original=len(self._pending_bytes), padded_to=AudioConstants.PCM16_FRAME_SIZE
+            )
+        else:
+            # Exact frame already buffered
+            await self._downlink_stream.send(self._pending_bytes[: AudioConstants.PCM16_FRAME_SIZE])
+
+        self._pending_bytes = b""
+
     def get_stats(self) -> dict:
         """Get bridge statistics.
 
@@ -182,19 +204,7 @@ class AudioAdapter:
 
         Flushes any pending bytes by padding the final incomplete frame.
         """
-        # Flush pending bytes if any
-        if len(self._pending_bytes) > 0:
-            if len(self._pending_bytes) < AudioConstants.PCM16_FRAME_SIZE:
-                # Pad final incomplete frame with silence
-                padding_size = AudioConstants.PCM16_FRAME_SIZE - len(self._pending_bytes)
-                padded_frame = self._pending_bytes + b'\x00' * padding_size
-                await self._downlink_stream.send(padded_frame)
-                self._logger.debug(
-                    "Flushed final incomplete frame",
-                    original=len(self._pending_bytes),
-                    padded_to=AudioConstants.PCM16_FRAME_SIZE
-                )
-            self._pending_bytes = b''
+        await self.flush_pending_downlink()
 
         await self._uplink_stream.close()
         await self._downlink_stream.close()
